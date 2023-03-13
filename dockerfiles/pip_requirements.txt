@@ -1,0 +1,4 @@
+jupyter # vscode interactive python function
+autopep8 # vscode auto formate code
+matplotlib
+pandas

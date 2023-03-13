@@ -1,9 +1,9 @@
 #!/bin/bash
 
 echo "Sart time=$(date +"%T")"
-IMG_NAME="fs-pattern"
+IMG_NAME="cv_app"
 IMG_TAG="latest"
-CTNR_NAME="fs-pattern-ctnr"
+CTNR_NAME="cv_app-ctnr"
 WORKDIR="/app"
 
 VOLUME=""
@@ -19,6 +19,7 @@ do
 
         START="$(TZ=UTC0 printf '%(%s)T\n' '-1')" # `-1`  is the current time
         
+        cd ./dockerfiles
         docker rmi $IMG_NAME
         docker build $CACHE -t $IMG_NAME .
 

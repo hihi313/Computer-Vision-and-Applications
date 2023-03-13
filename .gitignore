@@ -110,7 +110,8 @@ ipython_config.py
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
+
 
 # Thumbnails
 ._*
@@ -794,3 +795,5 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,windows,python,c++,c,matlab,octave,opencv,visualstudiocode,visualstudio,jupyternotebooks
+
+output*/*

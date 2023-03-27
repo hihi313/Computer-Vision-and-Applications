@@ -60,6 +60,7 @@ do
         # --mount type=bind,src="",dst="" \
         # --user="$(id -u):$(id -g)" \
 
+        sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
         sudo xhost + localhost &&
             docker run -it $RM $GPU $DISPLAY_VOLUME $VOLUME \
                 -e QT_X11_NO_MITSHM=1 \

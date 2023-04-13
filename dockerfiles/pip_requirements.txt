@@ -1,5 +1,12 @@
-# vscode interactive python function
-jupyter==1.0.0
-# vscode auto formate code
-autopep8==2.0.2
 matplotlib==3.7.1
+
+# dev
+
+## vscode interactive python function
+jupyter==1.0.0
+
+## vscode auto formate code
+autopep8==2.0.2
+
+## remove unused imports
+autoflake==2.0.2

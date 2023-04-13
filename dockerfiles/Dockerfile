@@ -17,11 +17,18 @@ WORKDIR /tmp
 # APT packages 
 RUN apt update 
 COPY ./${APT_PKG} ./
-RUN xargs apt install --yes --no-install-recommends < ${APT_PKG}
+RUN xargs apt install \
+    --yes \
+    --no-install-recommends\
+    < ${APT_PKG}
 
 # Python packages
 COPY ./${PIP_PKG} ./
-RUN pip3 install --no-cache-dir --requirement ${PIP_PKG}
+RUN python3 -m pip install --upgrade pip \
+    && python3 -m pip install \
+    --no-cache-dir \
+    --requirement \
+    ${PIP_PKG}
 
 # Clean up
 RUN apt clean \

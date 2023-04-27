@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Sart time=$(date +"%T")"
-IMG_NAME="cv_app"
+IMG_NAME="hihi313/cv_app"
 IMG_TAG="latest"
 CTNR_NAME="cv_app-ctnr"
 WORKDIR="/app"
@@ -60,7 +60,7 @@ do
         # --mount type=bind,src="",dst="" \
         # --user="$(id -u):$(id -g)" \
 
-        sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+        # sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
         sudo xhost + localhost &&
             docker run -it $RM $GPU $DISPLAY_VOLUME $VOLUME \
                 -e QT_X11_NO_MITSHM=1 \

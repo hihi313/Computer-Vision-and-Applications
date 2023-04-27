@@ -1,3 +1,4 @@
 *
 !apt_packages.txt
 !pip_requirements.txt
+!*.sh

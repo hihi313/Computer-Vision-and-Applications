@@ -6,6 +6,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG ROOT_PWD=root
 ARG APT_PKG=apt_packages.txt
 ARG PIP_PKG=pip_requirements.txt
+ARG VSCODE_EXT_SH=vscode.sh
 
 USER root
 # Set root password
@@ -29,6 +30,10 @@ RUN python3 -m pip install --upgrade pip \
     --no-cache-dir \
     --requirement \
     ${PIP_PKG}
+
+# Pre-install vscode server, extensions
+COPY ./${VSCODE_EXT_SH} ./
+RUN ./vscode.sh
 
 # Clean up
 RUN apt clean \

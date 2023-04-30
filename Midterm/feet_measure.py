@@ -15,6 +15,7 @@ ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
 OUTPUT_DIR = ROOT / "outputs"
 
 # %% Utils
+plt.ion()
 
 
 def imshow(name: str, img: np.ndarray, save: bool = False, hold: bool = False, ext: str = "jpg"):
@@ -27,7 +28,6 @@ def imshow(name: str, img: np.ndarray, save: bool = False, hold: bool = False, e
         plt.imsave(f"{str(OUTPUT_DIR)}/{name}.{ext}", img)
     if not hold:
         fig.show()
-# TODO?: show multi images
 
 
 def grayscale_denoise(*imgs: Tuple[np.ndarray],
@@ -86,7 +86,7 @@ def binarize(*imgs: Tuple[np.ndarray], contrast: float = 2.0, inv_bw: bool = Fal
     return results
 
 
-def max_hull(*imgs: Tuple[np.ndarray], color: Tuple[int, int, int] = (0, 255, 0), thickness: int = 3, debug: bool = False, draw_n: int = 3):
+def max_contour(*imgs: Tuple[np.ndarray], color: Tuple[int, int, int] = (0, 255, 0), thickness: int = 3, debug: bool = False, draw_n: int = 3):
     results = []
     for i, img in enumerate(imgs):
         contours, hierarchy = cv.findContours(
@@ -103,9 +103,21 @@ def max_hull(*imgs: Tuple[np.ndarray], color: Tuple[int, int, int] = (0, 255, 0)
                 cv.drawContours(img_contour_j, contours, j,
                                 color=color, thickness=thickness)
                 imshow(f"img{i}_contour_{j}", img_contour_j, hold=True)
+        # Save max contours
+        results.append(contours[0])
+    plt.show()
+    return results
+
+
+def max_hull(*imgs: Tuple[np.ndarray], color: Tuple[int, int, int] = (0, 255, 0), thickness: int = 3, debug: bool = False, draw_n: int = 3):
+    results = []
+    contours = max_contour(
+        *imgs, color=color, thickness=thickness, debug=False, draw_n=draw_n)
+    for i, cnt in enumerate(contours):
         # hull of max contour
-        hull = cv.convexHull(contours[0])
+        hull = cv.convexHull(cnt)
         if debug:
+            h, w = imgs[i].shape[:2]
             img_hull = np.zeros((h, w, 3), dtype=np.uint8)
             cv.drawContours(img_hull, [hull],
                             0, color=color, thickness=thickness)
@@ -128,6 +140,7 @@ def approx_quadrilateral(*hulls, epsilon_weight: float = 2e-2, debug: bool = Fal
                          img_size: Tuple = None, color: Tuple[int, int, int] = (0, 255, 0),
                          thickness: int = 3, font_color: Tuple[int, int, int] = (0, 0, 255),
                          font_thickness: int = 3):
+    results = []
     # Approximate the convex quadrilateral
     for i, hull in enumerate(hulls):
         epsilon = epsilon_weight * cv.arcLength(hull, True)
@@ -145,8 +158,9 @@ def approx_quadrilateral(*hulls, epsilon_weight: float = 2e-2, debug: bool = Fal
                 cv.circle(img, tuple(c), radius=3,
                           color=color, thickness=thickness)
                 imshow(f"hull {i} corners", img, hold=True)
+        results.append(corners)
     plt.show()
-    return corners
+    return results
 
 
 def sort_by_distance(points: np.ndarray, ref_point: np.ndarray = None):
@@ -173,8 +187,43 @@ def order_quadrilateral_corners(corners: np.ndarray):
     return np.array([tl, tr, br, bl])
 
 
-# %%
+def inch_to_numPix(width: float, height: float, ppi: int = 96, precision=1e-3):
+    w = width * round(ppi)
+    h = height * round(ppi)
+    w_r = round(w)
+    h_r = round(h)
+    # using epsilon not !=, because arithmetic limit/precision of computer
+    rounded = (abs(w - w_r) > precision) or (abs(h - h_r) > precision)
+    return w_r, h_r, rounded
 
+
+def points_at_angle(contour: np.ndarray, ang: float, origin: np.ndarray = None,
+                   epsilon: float = 15, minN: int = 1, topN: float = 0.1):
+    ang = ang % 360
+    if origin is None:
+        # Calculate moments of contours
+        M = cv.moments(contour)
+        # Calculate centroid of object
+        origin = np.array((M['m10']/M['m00'], M['m01']/M['m00']))
+    points = contour.squeeze()
+    # Compute the vectors from O to each point
+    vectors = points - origin
+    # Compute the angles of each vector with respect to the origin
+    angles = np.rad2deg(np.arctan2(vectors[:, 1], vectors[:, 0]))
+    angles = angles % 360
+    # Find the indices of the points that satisfy the condition
+    indices = np.where(np.abs(angles - ang) < epsilon)
+    # Select the points using the indices
+    pntAng = points[indices]
+    # If not enough point
+    if len(pntAng) < minN and minN >= 1:
+        N = max(round(len(points) * topN), round(minN))
+        # Select top N closest deg point
+        pntAng = points[np.argsort(np.abs(angles - ang))][:N]
+    return pntAng, origin
+
+
+# %%
 
 imgL = cv.imread(f"{ROOT / 'left view 03.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
 imgR = cv.imread(f"{ROOT / 'right view 03.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
@@ -205,26 +254,15 @@ imshow("imgR_bw", imgR_bw, save=True)
 
 # %%
 
-L_hull, R_hull = max_hull(imgL_bw, imgR_bw, debug=True)
+L_hull, R_hull = max_hull(imgL_bw, imgR_bw, debug=True, draw_n=1)
 
-draw_contours(imgL_bw.shape, L_hull, R_hull)
+# draw_contours(imgL_bw.shape, L_hull, R_hull)
 
 # %%
 
-corners = approx_quadrilateral(
+corners_L, corners_R = approx_quadrilateral(
     L_hull, R_hull, debug=True, img_size=imgL_bw.shape)
-
 # %%
-
-
-def inch_to_numPix(width: float, height: float, ppi: int = 96, epsilon=1e-3):
-    w = width * round(ppi)
-    h = height * round(ppi)
-    w_r = round(w)
-    h_r = round(h)
-    # using epsilon not !=, because arithmetic limit/precision of computer
-    rounded = (abs(w - w_r) > epsilon) or (abs(h - h_r) > epsilon)
-    return w_r, h_r, rounded
 
 
 a4_w, a4_h = 8.3, 11.7
@@ -236,16 +274,66 @@ dst_corners = np.array([[0, 0],
                         [dst_width, dst_height],
                         [0, dst_height]])
 
-# %%
+# %% Get contour of feet
 # src -> dst, Use least-square
-H, mask = cv.findHomography(corners, dst_corners, 0)
+H_L, mask_L = cv.findHomography(corners_L, dst_corners, 0)
+H_R, mask_R = cv.findHomography(corners_R, dst_corners, 0)
 
 
-imgR_pers = cv.warpPerspective(imgR_bw, H, (dst_width, dst_height),
+imgL_pers = cv.warpPerspective(imgL_bw, H_L, (dst_width, dst_height),
                                flags=cv.INTER_CUBIC,
                                borderMode=cv.BORDER_CONSTANT)
+imgR_pers = cv.warpPerspective(imgR_bw, H_R, (dst_width, dst_height),
+                               flags=cv.INTER_CUBIC,
+                               borderMode=cv.BORDER_CONSTANT)
+# Invert to make feet white(content), in order to get content's contour
+imgL_pers = cv.bitwise_not(imgL_pers)
+imgR_pers = cv.bitwise_not(imgR_pers)
 
+
+imshow("imgL_pers", imgL_pers, save=True)
 imshow("imgR_pers", imgR_pers, save=True)
+
+# %%
+
+footL, footR = max_contour(imgL_pers, imgR_pers, debug=True, draw_n=1)
+# %%
+
+# Using convex hull has better result, less points & eleminate concave points
+footL_hull = cv.convexHull(footL)
+footR_hull = cv.convexHull(footR)
+
+topAngle = 270
+topPntsL, originL = points_at_angle(footL_hull, topAngle, epsilon=15)
+topPntsR, originR = points_at_angle(footR_hull, topAngle, epsilon=5)
+topL = sorted(topPntsL, key=lambda p: p[1])[0]
+topR = sorted(topPntsR, key=lambda p: p[1])[0]
+
+bottomAngle = 90
+bottomPntsL, _ = points_at_angle(footL_hull, bottomAngle, epsilon=5, origin=originL)
+bottomPntsR, _ = points_at_angle(footR_hull, bottomAngle, epsilon=5, origin=originR)
+bottomL = sorted(bottomPntsL, reverse=True, key=lambda p: p[1])[0]
+bottomR = sorted(bottomPntsR, reverse=True, key=lambda p: p[1])[0]
+
+# %% Show results
+
+h, w = imgR_pers.shape[:2]
+for i, (cnt, o, ts, t, bs, b) in enumerate([(footL, originL, topPntsL, topL, bottomPntsL, bottomL),
+                                            (footR, originR, topPntsR, topR, bottomPntsR, bottomR)]):
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    cv.drawContours(img, [cnt], 0, (0, 255, 0), 2)
+    cv.circle(img, (round(o[0]), round(o[1])),
+              radius=3, color=(0, 255, 255), thickness=3)
+    for pnts, pnt in [(ts, t),
+                      (bs, b)]:
+        for p in pnts:
+            cv.circle(img, tuple(p), radius=3, color=(0, 0, 255), thickness=3)
+        cv.circle(img, tuple(pnt), radius=3,
+                  color=(255, 255, 255), thickness=3)
+    imshow(f"contour {i} extreme point", img, save=True, hold=True)
+plt.show()
+# %%
+
 # %%
 
 # LSD

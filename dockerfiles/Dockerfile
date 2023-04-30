@@ -32,11 +32,12 @@ RUN python3 -m pip install --upgrade pip \
     ${PIP_PKG}
 
 # Pre-install vscode server, extensions
-COPY ./${VSCODE_EXT_SH} ./
-RUN ./vscode.sh
+# COPY ./${VSCODE_EXT_SH} ./
+# RUN ./vscode.sh
 
 # Clean up
-RUN apt clean \
+RUN apt autoremove --yes \
+    && apt clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 WORKDIR /app

@@ -27,8 +27,8 @@ def imshow(name: str, img: np.ndarray, save: bool = False, hold: bool = False, e
         fig.show()
 
 
-imgL = cv.imread(f"{ROOT / 'left view 03.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
-imgR = cv.imread(f"{ROOT / 'right view 03.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
+imgL = cv.imread(f"{ROOT / 'left view 04.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
+imgR = cv.imread(f"{ROOT / 'right view 04.jpg'}", cv.IMREAD_REDUCED_COLOR_4)
 height, width, channel = imgL.shape
 
 
@@ -223,7 +223,6 @@ imgR_pers = cv.warpPerspective(cannyR, H_R, (dst_width, dst_height),
 
 imshow("imgL_pers", imgL_pers, save=True)
 imshow("imgR_pers", imgR_pers, save=True)
-imshow("tmp", imgL_pers[:, -1])
 # %% Get foot & its contour by not-foot region
 
 
@@ -438,4 +437,6 @@ foot_h, foot_w = pix2len([box_wh[1], box_wh[0]], [dst_height, dst_width], [
 cv.putText(img, f"width={foot_w:.2f}cm, height={foot_h:.2f}cm", tuple(box[0] + (-50, 50)),
            fontFace=cv.FONT_HERSHEY_SIMPLEX, fontScale=1,
            color=(0, 255, 255), thickness=3, lineType=cv.LINE_AA)
-imshow(f"test", img)
+imshow(f"M10902117", img, save=True)
+
+# %%

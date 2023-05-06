@@ -25,7 +25,7 @@ RUN xargs apt install \
 
 # Python packages
 COPY ./${PIP_PKG} ./
-RUN python3 -m pip install --upgrade pip \
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
     && python3 -m pip install \
     --no-cache-dir \
     --requirement \

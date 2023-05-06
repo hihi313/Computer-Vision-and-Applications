@@ -39,10 +39,10 @@ img_r = cv.imread(f"{IMG_R}", cv.IMREAD_GRAYSCALE)
 # %%
 
 
-def get_F(pnts_l, pnts_r):
+def get_F(pnts_l, pnts_r, method=cv.FM_RANSAC, th=1.0, confid=0.99):
     F, mask = cv.findFundamentalMat(pnts_l, pnts_r,
-                                    method=cv.FM_RANSAC, ransacReprojThreshold=1.0,
-                                    confidence=0.99)
+                                    method=method, ransacReprojThreshold=th,
+                                    confidence=confid)
     U, S, VT = np.linalg.svd(F)
     S[-1] = 0
     F_rank2 = U @ np.diag(S) @ VT

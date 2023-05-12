@@ -797,6 +797,9 @@ FodyWeavers.xsd
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,windows,python,c++,c,matlab,octave,opencv,visualstudiocode,visualstudio,jupyternotebooks
 
 **/output*/*
+Midterm/test.py
+HW03/test.py
+test.py
 *.pdf
 *.zip
 *.7z

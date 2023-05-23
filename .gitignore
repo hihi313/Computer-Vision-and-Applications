@@ -806,6 +806,6 @@ test.py
 *.jpg
 *.jpeg
 *.png
-*.bmp
+*.[bB][mM][Pp]
 *.pptx
 *.blend

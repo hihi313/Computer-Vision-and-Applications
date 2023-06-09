@@ -116,7 +116,7 @@ def homogeneous(points: np.ndarray):
     """
     N, s = points.shape[:2]
     assert points.ndim == 2 and N > 0 and s == 2
-    return np.append(points, np.ones((N, 1)), axis=1)
+    return np.append(points, np.ones((N, 1)), axis=1) # N*3, last col is 1s
 
 def get_epilines(F: np.ndarray, points: np.ndarray, normalize: bool = False):
     assert F.shape == (3, 3)
@@ -129,8 +129,49 @@ def get_epilines(F: np.ndarray, points: np.ndarray, normalize: bool = False):
     return epilines
 
 L_epilines = get_epilines(F, L_px, True)
-# %% Match point
+# %% Get points near epilines
 
+def get_points_near_epilines(epilines:np.ndarray, candidate_points:np.ndarray,
+                             distance_th: float = None, num_candidate: int = 3):
+    """
+        epilines: N*3
+        candidate_points: candidate pixel locations, N_c*2
+    """
+    N = epilines.shape[0]
+    N_c = candidate_points.shape[0]
+    assert N > 0 and N_c > 0
+
+    candi_pnts_homo = homogeneous(candidate_points)
+    # N*3 * 3*N_c = N*N_c, N_c = #candidate points
+    dist = abs(epilines @ candi_pnts_homo.T)
+
+    # N*N_C*2, element is (candidate_point, distance)
+    epi_candi = []
+    for i in range(N):
+        candis = []
+        for j in range(N_c):
+            candis.append((candidate_points[j], dist[i][j]))
+        epi_candi.append(candis)
+
+    # Sort by distance for each row
+    epi_close = [sorted(candis, key=lambda c: c[1])
+                 for candis in epi_candi]
+    # Filter by condition provided & remove distance info
+    if distance_th is not None:
+        # For each row, check elements' distance < th
+        epi_close = [[candi[0]
+                      for candi in closes if candi[1] < distance_th]
+                     for closes in epi_close]
+    elif num_candidate is not None:
+        # top N candidates/points close to epiline
+        epi_close = [[candi[0]
+                      for candi in closes[:num_candidate]]
+                     for closes in epi_close]
+
+    return epi_close
+
+L_px_close = get_points_near_epilines(L_epilines, R_px, distance_th=10)
+# %% Patch scores of (candidate) points
 
 def get_patch(image: np.ndarray, anchor: Tuple[int, int], patch_size: int):
     """
@@ -171,39 +212,56 @@ def get_patch(image: np.ndarray, anchor: Tuple[int, int], patch_size: int):
         bottom_row = col_idx_limit
     return image[top_row:bottom_row+1, left_col:right_col+1]
 
-
+def get_patch_score(image_l:np.ndarray, points_l:np.ndarray, 
+                    image_r:np.ndarray, candidates_r:np.ndarray, 
+                    patch_size:int = 8, score_method: int = cv.TM_CCOEFF_NORMED):
+    """
+        For each left point, get patch scores of its right (candidate) points
+        points_l: N*2
+        candidates_r: N*?, ? is #candidates of the left point. (candidates on right image)
+    """
+    
+# %%
 def match_point(image_l:np.ndarray, points:np.ndarray, 
                 image_r:np.ndarray, candidate_points:np.ndarray, epilines:np.ndarray,
-                patch_size:int = 8):
+                distance_th: float = 10,
+                patch_size:int = 8, patch_match_method: int = cv.TM_CCOEFF_NORMED):
     """
-        Search matching point along *normalized* epiline(on right image)
+        Search matching point (on left image) along (*normalized*) epiline(on right image)
+        Match right point by its highest (patch) score
     """
     assert isinstance(patch_size, int)
     N = len(points)
+    # epiline of each point
     assert N > 0 and N == len(epilines)
 
     candi_pnts_homo = homogeneous(candidate_points)
     # N*3 * 3*N_c = N*N_c, N_c = #candidate points
     dist = abs(epilines @ candi_pnts_homo.T)
 
-    # C closest candidate point (at least 1 candidate for a point)
-    C = 5 # TODO: to param
-    # Sort by distance of each epiline, N*C, element is index of candidate points
-    dist_idx = np.argsort(dist, axis=1)[:, :C] 
-    # N*C*2. Conver index to point to compare
-    candi_close = [candidate_points[dist_idx[i, :]] for i in range(N)]
+    # candidates that close to each epiline, may be empty/many. shape: N*?
+    # For each epiline, get indices that distance is close
+    close_pts_idx = [np.where(l2p_d <= distance_th)[0] for l2p_d in dist]
+    # Get the candidate using the indices of each epiline
+    close_pts = [candidate_points[pts_idx] for pts_idx in close_pts_idx]
 
     # Compare point's patch
-    scores = [] # score of all epiline's closest points
-    for i in range(N):
-        score_pnts = [] # score of an epiline's closest points
-        for j in range(C):
-            patch_l = get_patch(image_l, candi_close[i][j], patch_size)
-            patch_r = get_patch(image_r, candi_close[i][j], patch_size)
-            score = cv.matchTemplate(patch_l, patch_r, cv.TM_CCOEFF_NORMED)
-            score_pnts.append((score, j))
-        scores.append(score_pnts)
-    print("sdf")
+    matches = []
+    for i in range(N): # for left point that want to find a matched point
+        # left patch
+        patch_l = get_patch(image_l, points[i], patch_size)
+        max_score = -1
+        pt_max_score = None
+        for pt in close_pts[i]: # right candidate points of a left point
+            patch_r = get_patch(image_r, pt, patch_size)
+            score = cv.matchTemplate(patch_l, patch_r, patch_match_method)
+            if score[0][0] > max_score:
+                max_score = score
+                pt_max_score = pt
+        # Get right point that has max patch score
+        matches.append(pt_max_score)
 
-match_point(imgL, L_px, imgR, R_px, L_epilines)
+# Candidate/search region limit to be the scan line on another image in the "scanning" application
+# L_px_match = match_point(imgL, L_px, imgR, R_px, L_epilines)
 # %%
+print("sdf")

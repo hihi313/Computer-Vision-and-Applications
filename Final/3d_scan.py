@@ -1,4 +1,5 @@
 # %% Import
+import copy
 import imghdr
 import os
 from pathlib import Path
@@ -98,16 +99,36 @@ def get_max_px_row(img:np.ndarray):
     h, w = img.shape[:2]
     blur = cv.GaussianBlur(img, (1, 7), sigmaX=0, borderType=cv.BORDER_REPLICATE)
     # imshow("blur", blur)
-    rows = [i for i in range(h)]
+    ys = [i for i in range(h)]
     # Get max column index of each row, currently only using max()
-    max_col = np.argmax(blur, axis=1)
+    max_xs = np.argmax(blur, axis=1) # max Illumination's x of each y
     # Compose 2D index
-    result = np.array([rows, 
-                       max_col]).T
+    result = np.array([max_xs, ys]).T
     return result
 
 L_px = get_max_px_row(imgL)
 R_px = get_max_px_row(imgR) # Get top N brightest point as match candidate?
+# %% draw point
+
+def draw_point(image:np.ndarray, point:np.ndarray, 
+               radius: int = 5, thickness: int = 1, alpha: float = 0.5,
+               color: Tuple[int, int, int] = (0, 255, 0)):
+    if image.ndim or image.shape[2] < 3:
+        image = cv.cvtColor(image, cv.COLOR_GRAY2BGR)
+    img_black = copy.copy(image)#np.zeros_like(image)
+    # Sift right/match point x coordinate
+    # Draw points
+    for i in range(len(point)):
+        # left point
+        cv.circle(img_black, point[i], radius, color, thickness)
+    # Overlay image
+    return cv.addWeighted(img_black, alpha, image, (1-alpha), 0)
+
+imgL_max_pts = draw_point(imgL, L_px, radius=1)
+imgR_max_pts = draw_point(imgR, R_px, radius=1)
+
+imshow("imgL_max_pts", imgL_max_pts, True)
+imshow("imgR_max_pts", imgR_max_pts, True)
 # %% Get epipolar lines
 
 def homogeneous(points: np.ndarray):
@@ -137,8 +158,8 @@ def get_points_near_epilines(epilines:np.ndarray, candidate_points:np.ndarray,
         epilines: N*3
         candidate_points: candidate pixel locations, N_c*2
     """
-    N = epilines.shape[0]
-    N_c = candidate_points.shape[0]
+    N = len(epilines)
+    N_c = len(candidate_points)
     assert N > 0 and N_c > 0
 
     candi_pnts_homo = homogeneous(candidate_points)
@@ -170,7 +191,7 @@ def get_points_near_epilines(epilines:np.ndarray, candidate_points:np.ndarray,
 
     return epi_close
 
-L_px_close = get_points_near_epilines(L_epilines, R_px, distance_th=10)
+L_px_close = get_points_near_epilines(L_epilines, R_px, num_candidate=10)
 # %% Patch scores of (candidate) points
 
 def get_patch(image: np.ndarray, anchor: Tuple[int, int], patch_size: int):
@@ -182,7 +203,7 @@ def get_patch(image: np.ndarray, anchor: Tuple[int, int], patch_size: int):
     n_row, n_col = image.shape[:2]
     # anchor must within image
     assert (0 <= anchor[1] or anchor[1] <= n_row) and (0 <= anchor[0] or anchor[0] <= n_col)
-    assert patch_size <= min(n_row, n_col)
+    assert patch_size <= min(n_row, n_col) and isinstance(patch_size, int)
 
     ml = mt = mr = mb = patch_size // 2
     # even size patch, anchor is at bottom right corner of the center
@@ -214,54 +235,109 @@ def get_patch(image: np.ndarray, anchor: Tuple[int, int], patch_size: int):
 
 def get_patch_score(image_l:np.ndarray, points_l:np.ndarray, 
                     image_r:np.ndarray, candidates_r:np.ndarray, 
-                    patch_size:int = 8, score_method: int = cv.TM_CCOEFF_NORMED):
+                    patch_size:int = 8, score_method: int = cv.TM_SQDIFF_NORMED):
     """
         For each left point, get patch scores of its right (candidate) points
         points_l: N*2
-        candidates_r: N*?, ? is #candidates of the left point. (candidates on right image)
+        candidates_r: N*?, ? is #candidates of the left point. 
+            (candidates on right image). May be empty
     """
-    
-# %%
-def match_point(image_l:np.ndarray, points:np.ndarray, 
-                image_r:np.ndarray, candidate_points:np.ndarray, epilines:np.ndarray,
-                distance_th: float = 10,
-                patch_size:int = 8, patch_match_method: int = cv.TM_CCOEFF_NORMED):
-    """
-        Search matching point (on left image) along (*normalized*) epiline(on right image)
-        Match right point by its highest (patch) score
-    """
-    assert isinstance(patch_size, int)
-    N = len(points)
-    # epiline of each point
-    assert N > 0 and N == len(epilines)
+    N = len(points_l)
+    assert N == len(candidates_r)
 
-    candi_pnts_homo = homogeneous(candidate_points)
-    # N*3 * 3*N_c = N*N_c, N_c = #candidate points
-    dist = abs(epilines @ candi_pnts_homo.T)
+    pts_scores = []
+    # patchs' dict to reuse patches on right image
+    patDic_r = {}
+    for pt_l, pts_r in zip(points_l, candidates_r):
+        patch_l = get_patch(image_l, pt_l, patch_size)
+        scores = []
+        for pt_r in pts_r:
+            ptr = tuple(pt_r) # convert to tuple key
+            patch_r = None
+            if ptr in patDic_r:
+                patch_r = patDic_r[ptr]
+            else:
+                patch_r = get_patch(image_r, pt_r, patch_size)
+                patDic_r[ptr] = patch_r
+            score = cv.matchTemplate(patch_l, patch_r, score_method)
+            scores.append((pt_r, score))
+        pts_scores.append(scores)
+    return pts_scores
 
-    # candidates that close to each epiline, may be empty/many. shape: N*?
-    # For each epiline, get indices that distance is close
-    close_pts_idx = [np.where(l2p_d <= distance_th)[0] for l2p_d in dist]
-    # Get the candidate using the indices of each epiline
-    close_pts = [candidate_points[pts_idx] for pts_idx in close_pts_idx]
+score_method = cv.TM_SQDIFF_NORMED
+# N*?*2, ? = #candidates, 2= (candidate point, score)
+L_px_scores = get_patch_score(imgL, L_px, imgR, L_px_close, score_method=score_method)
+# %% Get match  by score
 
-    # Compare point's patch
+def get_match(px_scores: List[List[Tuple[Tuple[int, int], float]]], 
+              score_method:int, score_th: float=None):
     matches = []
-    for i in range(N): # for left point that want to find a matched point
-        # left patch
-        patch_l = get_patch(image_l, points[i], patch_size)
-        max_score = -1
-        pt_max_score = None
-        for pt in close_pts[i]: # right candidate points of a left point
-            patch_r = get_patch(image_r, pt, patch_size)
-            score = cv.matchTemplate(patch_l, patch_r, patch_match_method)
-            if score[0][0] > max_score:
-                max_score = score
-                pt_max_score = pt
-        # Get right point that has max patch score
-        matches.append(pt_max_score)
+    # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
+    take_max = False if score_method in [cv.TM_SQDIFF, cv.TM_SQDIFF_NORMED] else True
+    for scores in px_scores:
+        # get matched point based on min/max score
+        match = []
+        if len(scores) > 0:
+            # Sort by score
+            match = sorted(scores, key=lambda l: l[1], reverse=take_max)
+            # Filter by score_th if not provided
+            if score_th is not None:
+                if take_max:
+                    match = [p_s for p_s in match
+                             if p_s[1] > score_th]
+                else:
+                    match = [p_s for p_s in match
+                             if p_s[1] < score_th]
+        matches.append(match)
+    return matches
 
-# Candidate/search region limit to be the scan line on another image in the "scanning" application
-# L_px_match = match_point(imgL, L_px, imgR, R_px, L_epilines)
+L_px_matches = get_match(L_px_scores, score_method=score_method)
+# Take first match's point only
+L_px_matches = [match[0][0] if len(match) > 0 else match
+                for match in L_px_matches]
+
+print(len([m  for m in L_px_matches if len(m) > 0]))
+# %% Draw match
+
+def draw_match(image_l:np.ndarray, point_l:np.ndarray, 
+               image_r:np.ndarray, match_pnts: np.ndarray,
+               radius: int = 2, thickness: int = 1,
+               match_color: Tuple[int, int, int] = (0, 255, 0),
+               unmatch_color: Tuple[int, int, int] = (0, 0, 255)):
+    N = len(point_l)
+    assert N == len(match_pnts)
+    h, w = image_l.shape[:2]
+    h_r, w_r = image_r.shape[:2]
+    assert h == h_r
+
+    # concate image
+    image = np.concatenate((image_l, image_r), axis=1)
+    if image.ndim or image.shape[2] < 3:
+        image = cv.cvtColor(image, cv.COLOR_GRAY2BGR)
+    img_black = copy.copy(image) #np.zeros_like(image) + 255
+    # Sift right/match point x coordinate
+    match = [(m[0]+w, m[1]) if m is not None else None
+             for m in match_pnts]
+    # Draw points
+    for i in range(N):
+        if match[i] is not None:
+            # left point
+            cv.circle(img_black, point_l[i], radius, match_color, thickness)
+            # right point
+            cv.circle(img_black, match[i], radius, match_color, thickness)
+            # line
+            cv.line(img_black, point_l[i], match[i], match_color, thickness, lineType=cv.LINE_AA)
+        else:
+            # left point
+            cv.circle(img_black, point_l[i], radius, unmatch_color, thickness)
+    # Overlay image
+    alpha = 0.5
+    return cv.addWeighted(img_black, alpha, image, (1-alpha), 0)
+
+imgL_max_pts = draw_match(imgL, L_px, imgR, L_px_matches)
+imshow("tmp", imgL_max_pts, True)
 # %%
 print("sdf")
+# %%
+if __name__ == "__main__":
+    plt.show()

@@ -1,6 +1,6 @@
 matplotlib
-opencv-python
-opencv-contrib-python
+opencv-python<=4.6
+opencv-contrib-python<=4.6
 
 # dev
 

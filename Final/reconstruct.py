@@ -159,6 +159,7 @@ def epilines(F: np.ndarray, points: np.ndarray, is_left: bool,
 # imshow("L max points", draw_point(L_img, L_px, radius=1), True)
 # imshow("R max points", draw_point(R_img, R_px, radius=1), True)
 # # 2. Get R points near L epilines
+# L_px = L_px.astype(np.float64)
 # R_epilines = epilines(F, L_px, True)
 
 # %% Get patch score image
@@ -242,6 +243,7 @@ def get_match_on_score_img(epilines, pts_scoreImgs, score_method):
 
 # L_matches = get_match_on_score_img(
 #     R_epilines, L_pts_sImgs, score_method=score_method)
+# L_matches = L_matches.astype(np.float64)
 # %% Draw match
 
 
@@ -263,17 +265,19 @@ def draw_match(image_l: np.ndarray, point_l: np.ndarray,
         image = cv.cvtColor(image, cv.COLOR_GRAY2BGR)
     img_black = copy.copy(image)  # np.zeros_like(image) + 255
     # Sift right/match point x coordinate
-    match = [(m[0]+w, m[1]) if m is not None else None
+    match = [(round(m[0]+w), round(m[1])) if m is not None else None
              for m in match_pnts]
     # Draw points
     for i in range(N):
         color = unmatch_color if mask is not None and not mask[i] else match_color
         # left point
-        cv.circle(img_black, point_l[i], radius, color, thickness)
+        cv.circle(img_black, point_l[i].round().astype(np.int32),
+                  radius, color, thickness)
         # right point
-        cv.circle(img_black, match[i], radius, color, thickness)
+        cv.circle(img_black, match[i],
+                  radius, color, thickness)
         # line
-        cv.line(img_black, point_l[i], match[i],
+        cv.line(img_black, point_l[i].round().astype(np.int32), match[i],
                 color, thickness, lineType=cv.LINE_AA)
     # Overlay image
     alpha = 0.5
@@ -286,7 +290,8 @@ def draw_match(image_l: np.ndarray, point_l: np.ndarray,
 # Test correctMatches
 # L_px_before, L_matches_before = np.copy(L_px), np.copy(L_matches)
 
-# L_px, L_matches = cv.correctMatches(F, L_px_before.reshape(1, -1, 2), L_matches_before.reshape(1, -1, 2))
+# L_px, L_matches = cv.correctMatches(F, L_px_before.reshape(
+#     1, -1, 2), L_matches_before.reshape(1, -1, 2))
 # L_px = L_px.reshape(-1, 2)
 # L_matches = L_matches.reshape(-1, 2)
 
@@ -316,25 +321,22 @@ def get_3D_points(P_l: np.ndarray, points_l: np.ndarray,
         P: 3*4
         points: N*2
     """
-    if not isinstance(points_l, np.ndarray):
-        points_l = np.array(points_l)
-    if not isinstance(points_r, np.ndarray):
-        points_r = np.array(points_r)
-    # left point must be at least float32, or it'll crash. Don't know why
-    points_l = points_l.astype(np.float64)
+    # All input must be float type to make the cv.triangulatePoints works correctly
+    assert np.issubdtype(P_l.dtype, np.floating) and np.issubdtype(points_l.dtype, np.floating) and np.issubdtype(
+        P_r.dtype, np.floating) and np.issubdtype(points_r.dtype, np.floating)
     points_3d_homo = cv.triangulatePoints(
         P_l, P_r, points_l.T, points_r.T).T  # 4*N -> N*4
     # Result check like: https://github.com/opencv/opencv/blob/a74fe2ec01d9218d06cb7675af633fc3f409a6a2/modules/calib3d/src/five-point.cpp#L516
     mask = points_3d_homo[:, 2] * points_3d_homo[:, 3] > 0
     points_3d = points_3d_homo[:, :3] / points_3d_homo[:, -1].reshape(-1, 1)
     # N*3, N. Should handle /=0 or outlier by mask
-    return points_3d, mask, np.count_nonzero(mask == False)  # outliers
+    return points_3d, mask  # inlier mask
 
 
 # P_l, R_l, t_l = projection_matrix(K_l, RT_l, False)
 # P_r, R_r, t_r = projection_matrix(K_r, RT_r, False)
 
-# points_3d, inlier_mask, num_outliers = get_3D_points(P_l, L_px, P_r, L_matches)
+# points_3d, mask = get_3D_points(P_l, L_px, P_r, L_matches)
 # %% Get 3d points DLT
 
 
@@ -367,7 +369,7 @@ def get_3D_points_DLT(P_l: np.ndarray, points_l: np.ndarray,
 # points_3d_dlt = get_3D_points_DLT(P_l, L_px, P_r, L_matches)
 
 
-# %%
+# %% Get 3d points inliers that reprojection error < th
 def inlier_3d(points_3d: np.ndarray,
               K_l: np.ndarray, R_l: np.ndarray, t_l, points_l: np.ndarray,
               K_r: np.ndarray, R_r: np.ndarray, t_r, points_r: np.ndarray,
@@ -404,34 +406,36 @@ def inlier_3d(points_3d: np.ndarray,
     err = (err_l + err_r) / 2.0
     # reprojection error should < TH
     inli_mask = err < outlier_th
-    return inli_mask
+    return points_3d[inli_mask], inli_mask, err
 
 
 # inlier_mask_dlt = inlier_3d(points_3d_dlt,
 #                              K_l, R_l, t_l, L_px,
 #                              K_r, R_r, t_r, L_matches, None)
+# p3d_inline, inlier_mask, err = inlier_3d(points_3d,
+#                                          K_l, R_l, t_l, L_px,
+#                                          K_r, R_r, t_r, L_matches, mask=mask)
+# np.savetxt(f"{OUTPUT_DIR / 'test.xyz'}", p3d_inline, delimiter=' ')
 # %% Draw 3d outlier
 
-# imshow("3d outlier", draw_match(L_img, L_px, R_img, L_matches, inlier_mask), True)
+# imshow("3d outlier", draw_match(
+#     L_img, L_px[mask], R_img, L_matches[mask], inlier_mask), True)
 # imshow("3d outlier dlt", draw_match(L_img, L_px,
 #        R_img, L_matches, inlier_mask_dlt), True)
-
-# %% Save to XYZ file
-
-# np.savetxt(f"{OUTPUT_DIR / 'points_3d.xyz'}",
-#            points_3d[inlier_mask], delimiter=' ')
-# np.savetxt(f"{OUTPUT_DIR / 'points_3d DLT.xyz'}",
-#            points_3d_dlt[inlier_mask_dlt], delimiter=' ')
 
 # %%
 if __name__ == "__main__":
     images = load_images(IMG_DIR)
     image_pairs = split_images(images)
     result_3d = np.empty((0, 3))
+    result_3d_dlt = np.empty((0, 3))
+    P_l, R_l, t_l = projection_matrix(K_l, RT_l, False)
+    P_r, R_r, t_r = projection_matrix(K_r, RT_r, False)
+    repro_th = 3
     for L_img, R_img in tqdm(image_pairs):
         # A image pair
         # 1. Brightest pixel each row
-        L_px = get_max_px_row(L_img)
+        L_px = get_max_px_row(L_img).astype(np.float64)
         # R_px = get_max_px_row(R_img)
         # 2. Get R points near L epilines
         R_epilines = epilines(F, L_px, True)
@@ -441,16 +445,31 @@ if __name__ == "__main__":
             L_px, L_img, R_img, score_method=score_method)
         # 4. Search match point along epiline on score image
         L_matches = get_match_on_score_img(
-            R_epilines, L_pts_sImgs, score_method=score_method)
+            R_epilines, L_pts_sImgs, score_method=score_method).astype(np.float64)
+        # 4.1 Correct match
+        L_px, L_matches = cv.correctMatches(
+            F, L_px.reshape(1, -1, 2), L_matches.reshape(1, -1, 2))
+        L_px = L_px.reshape(-1, 2)
+        L_matches = L_matches.reshape(-1, 2)
         # 5. triangulate
-        P_l, R_l, t_l = projection_matrix(K_l, RT_l, False)
-        P_r, R_r, t_r = projection_matrix(K_r, RT_r, False)
+        points_3d, mask = get_3D_points(P_l, L_px, P_r, L_matches)
         points_3d_dlt = get_3D_points_DLT(P_l, L_px, P_r, L_matches)
         # 6. Get inlier if reprojection err < th
         # inlier mask
-        inlier_mask_dlt = inlier_3d(points_3d_dlt,
-                                    K_l, R_l, t_l, L_px,
-                                    K_r, R_r, t_r, L_matches, None)
-        p3d_inline = points_3d_dlt[inlier_mask_dlt]
+        p3d_inline, inlier_mask, err = inlier_3d(points_3d,
+                                                 K_l, R_l, t_l, L_px,
+                                                 K_r, R_r, t_r, L_matches,
+                                                 mask=mask, outlier_th=repro_th)
+        p3d_inline_dlt, inlier_mask_dlt, err_dlt = inlier_3d(points_3d_dlt,
+                                                             K_l, R_l, t_l, L_px,
+                                                             K_r, R_r, t_r, L_matches,
+                                                             mask=None, outlier_th=repro_th)
+
         result_3d = np.append(result_3d, p3d_inline, axis=0)
-    np.savetxt(f"{OUTPUT_DIR / 'result_3d DLT.xyz'}", result_3d, delimiter=' ')
+        result_3d_dlt = np.append(result_3d_dlt, p3d_inline_dlt, axis=0)
+        np.savetxt(f"{OUTPUT_DIR / 'ckpt.xyz'}", result_3d, delimiter=' ')
+        np.savetxt(f"{OUTPUT_DIR / 'ckpt DLT.xyz'}",
+                result_3d_dlt, delimiter=' ')
+    np.savetxt(f"{OUTPUT_DIR / 'result_3d.xyz'}", result_3d, delimiter=' ')
+    np.savetxt(f"{OUTPUT_DIR / 'result_3d DLT.xyz'}",
+               result_3d_dlt, delimiter=' ')

@@ -314,9 +314,22 @@ def projection_matrix(K, Rt, inverse=True):
     result = (P, R_cw, t_cw) if inverse else (P, R, t)
     return result
 
+def check_triangulate(P_r, pts_raw, dist_th):
+    assert pts_raw.shape[-1] == 4
+    # Result check like: https://github.com/opencv/opencv/blob/a74fe2ec01d9218d06cb7675af633fc3f409a6a2/modules/calib3d/src/five-point.cpp#L516
+    mask = pts_raw[:, 2] * pts_raw[:, 3] > 0
+    # N*4, Normalize
+    pts_3d = pts_raw / pts_raw[:, 3].reshape(-1, 1)
+    mask = (pts_3d[:, 2]< dist_th) & mask
+    # N*3. points after projection
+    pts = (P_r @ pts_3d.T).T
+    mask = (pts[:, 2] > 0) & (pts[:, 2] < dist_th) & mask
+    return pts_3d[:, :3], mask
+
 
 def get_3D_points(P_l: np.ndarray, points_l: np.ndarray,
-                  P_r: np.ndarray, points_r: np.ndarray):
+                  P_r: np.ndarray, points_r: np.ndarray,
+                  z_th: float = 1000.0):
     """
         P: 3*4
         points: N*2
@@ -324,13 +337,9 @@ def get_3D_points(P_l: np.ndarray, points_l: np.ndarray,
     # All input must be float type to make the cv.triangulatePoints works correctly
     assert np.issubdtype(P_l.dtype, np.floating) and np.issubdtype(points_l.dtype, np.floating) and np.issubdtype(
         P_r.dtype, np.floating) and np.issubdtype(points_r.dtype, np.floating)
-    points_3d_homo = cv.triangulatePoints(
+    points_3d_tri = cv.triangulatePoints(
         P_l, P_r, points_l.T, points_r.T).T  # 4*N -> N*4
-    # Result check like: https://github.com/opencv/opencv/blob/a74fe2ec01d9218d06cb7675af633fc3f409a6a2/modules/calib3d/src/five-point.cpp#L516
-    mask = points_3d_homo[:, 2] * points_3d_homo[:, 3] > 0
-    points_3d = points_3d_homo[:, :3] / points_3d_homo[:, -1].reshape(-1, 1)
-    # N*3, N. Should handle /=0 or outlier by mask
-    return points_3d, mask  # inlier mask
+    return check_triangulate(P_r, points_3d_tri, z_th)
 
 
 # P_l, R_l, t_l = projection_matrix(K_l, RT_l, False)
@@ -341,7 +350,8 @@ def get_3D_points(P_l: np.ndarray, points_l: np.ndarray,
 
 
 def get_3D_points_DLT(P_l: np.ndarray, points_l: np.ndarray,
-                      P_r: np.ndarray, points_r: np.ndarray):
+                      P_r: np.ndarray, points_r: np.ndarray,
+                      z_th: float = 1000.0):
     p1_l = P_l[0, :].reshape(1, -1)  # 1*4
     p2_l = P_l[1, :].reshape(1, -1)
     p3_l = P_l[2, :].reshape(1, -1)
@@ -363,7 +373,7 @@ def get_3D_points_DLT(P_l: np.ndarray, points_l: np.ndarray,
     V = np.transpose(VH.conj(), axes=(0, 2, 1))
     # last column, N*4
     x = V[:, :, -1]
-    return x[:, :-1] / x[:, -1].reshape(-1, 1)
+    return check_triangulate(P_r, x, z_th)
 
 
 # points_3d_dlt = get_3D_points_DLT(P_l, L_px, P_r, L_matches)
@@ -378,11 +388,11 @@ def inlier_3d(points_3d: np.ndarray,
     assert N == len(points_l) and N == len(points_r)
 
     # Apply mask to remove outlier (w/ nan, inf, ...)
-    if mask is not None:
-        assert len(mask) == N
-        points_3d = points_3d[mask]
-        points_l = points_l[mask]
-        points_r = points_r[mask]
+    # if mask is not None:
+    #     assert len(mask) == N
+    #     points_3d = points_3d[mask]
+    #     points_l = points_l[mask]
+    #     points_r = points_r[mask]
 
     # r_l, _ = cv.Rodrigues(R_l.T)
     # r_r, _ = cv.Rodrigues(R_r.T)
@@ -406,7 +416,7 @@ def inlier_3d(points_3d: np.ndarray,
     err = (err_l + err_r) / 2.0
     # reprojection error should < TH
     inli_mask = err < outlier_th
-    return points_3d[inli_mask], inli_mask, err
+    return inli_mask, err
 
 
 # inlier_mask_dlt = inlier_3d(points_3d_dlt,
@@ -431,6 +441,7 @@ if __name__ == "__main__":
     result_3d_dlt = np.empty((0, 3))
     P_l, R_l, t_l = projection_matrix(K_l, RT_l, False)
     P_r, R_r, t_r = projection_matrix(K_r, RT_r, False)
+    z_th = 1000.0
     repro_th = 3
     for L_img, R_img in tqdm(image_pairs):
         # A image pair
@@ -452,24 +463,28 @@ if __name__ == "__main__":
         L_px = L_px.reshape(-1, 2)
         L_matches = L_matches.reshape(-1, 2)
         # 5. triangulate
-        points_3d, mask = get_3D_points(P_l, L_px, P_r, L_matches)
-        points_3d_dlt = get_3D_points_DLT(P_l, L_px, P_r, L_matches)
+        points_3d, mask = get_3D_points(P_l, L_px, P_r, L_matches, z_th=z_th)
+        points_3d_dlt, mask_dlt = get_3D_points_DLT(
+            P_l, L_px, P_r, L_matches, z_th=z_th)
         # 6. Get inlier if reprojection err < th
         # inlier mask
-        p3d_inline, inlier_mask, err = inlier_3d(points_3d,
-                                                 K_l, R_l, t_l, L_px,
-                                                 K_r, R_r, t_r, L_matches,
-                                                 mask=mask, outlier_th=repro_th)
-        p3d_inline_dlt, inlier_mask_dlt, err_dlt = inlier_3d(points_3d_dlt,
-                                                             K_l, R_l, t_l, L_px,
-                                                             K_r, R_r, t_r, L_matches,
-                                                             mask=None, outlier_th=repro_th)
-
+        inlier_mask, err = inlier_3d(points_3d,
+                                     K_l, R_l, t_l, L_px,
+                                     K_r, R_r, t_r, L_matches,
+                                     outlier_th=repro_th)
+        inlier_mask_dlt, err_dlt = inlier_3d(points_3d_dlt,
+                                             K_l, R_l, t_l, L_px,
+                                             K_r, R_r, t_r, L_matches,
+                                             outlier_th=repro_th)
+        # 7. get inliers
+        p3d_inline = points_3d[mask & inlier_mask]
+        p3d_inline_dlt = points_3d_dlt[mask_dlt & inlier_mask_dlt]
+        # 8. save
         result_3d = np.append(result_3d, p3d_inline, axis=0)
         result_3d_dlt = np.append(result_3d_dlt, p3d_inline_dlt, axis=0)
         np.savetxt(f"{OUTPUT_DIR / 'ckpt.xyz'}", result_3d, delimiter=' ')
         np.savetxt(f"{OUTPUT_DIR / 'ckpt DLT.xyz'}",
-                result_3d_dlt, delimiter=' ')
+                   result_3d_dlt, delimiter=' ')
     np.savetxt(f"{OUTPUT_DIR / 'result_3d.xyz'}", result_3d, delimiter=' ')
     np.savetxt(f"{OUTPUT_DIR / 'result_3d DLT.xyz'}",
                result_3d_dlt, delimiter=' ')
